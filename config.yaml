@@ -1,0 +1,69 @@
+# vLLM v0.15.1 server config for Mistral Devstral Small 2 24B (AWQ 4-bit) on NVIDIA GeForce RTX 5090
+# This file is loaded by the Docker entrypoint via: --config /workspace/config.yaml
+
+# ---- Model ----
+# Community AWQ 4-bit quantization of mistralai/Devstral-Small-2-24B-Instruct-2512.
+# vLLM auto-detects the compressed-tensors quantization format from config.json.
+model: "cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit"
+host: "0.0.0.0"
+port: 8000
+
+# ---- Tool calling (REQUIRED for Mistral Vibe CLI v2.0.2) ----
+# Without these two flags, Mistral Vibe CLI cannot perform any agentic actions
+# (file reads, writes, terminal commands). The model generates [TOOL_CALLS] tokens
+# that vLLM's MistralToolParser converts into OpenAI-compatible tool_calls objects.
+enable-auto-tool-choice: true
+tool-call-parser: "mistral"
+
+# ---- Text-only mode ----
+# Devstral Small 2 inherits a Pixtral vision encoder from its Mistral Small 3.1 24B
+# base model, but Devstral is a text/code-only model — the vision encoder is dead weight.
+# Setting image limit to 0 activates vLLM's text-only mode, which skips loading the
+# vision tower and multi-modal projector (~1 GiB BF16), freeing that VRAM for KV cache.
+limit-mm-per-prompt: '{"image": 0}'
+
+# ---- Memory layout on NVIDIA GeForce RTX 5090 (32 GiB GDDR7) ----
+#
+#   AWQ 4-bit text weights (no vision) ... ~14.0 GiB
+#   CUDA context + activations ........... ~ 1.7 GiB
+#   BF16 KV cache (90K tokens) ........... ~14.1 GiB
+#   Headroom ............................. ~ 0.6 GiB
+#   ─────────────────────────────────────────────────
+#   Total at 0.95 utilization ............ ~30.4 GiB
+#
+# KV cache stays in full precision (BF16) to preserve attention quality over long
+# contexts. It is enough that we already sacrifice quality with quantized weights —
+# quantizing the KV cache (FP8) on top of that compounds precision loss in ways that
+# hurt the model's ability to attend accurately to context thousands of tokens back.
+# Full-precision KV is non-negotiable when context fidelity matters.
+gpu-memory-utilization: 0.95
+
+# 90K context (90,000 tokens). The model supports up to 256K via YaRN scaling,
+# but 90K is the ceiling for full-precision BF16 KV cache + AWQ 4-bit text-only
+# weights on 32 GiB VRAM.
+#
+# KV cache math: 2 (K+V) x 40 layers x 8 KV heads x 128 dim x 2 bytes (BF16)
+#              = 163,840 bytes/token = 160 KiB/token
+# 90,000 tokens x 160 KiB = ~14.1 GiB
+max-model-len: 90000
+
+# Single concurrent request. This dedicates the full KV cache budget to one
+# Mistral Vibe CLI session — the intended single-user agentic coding workflow.
+max-num-seqs: 1
+
+# ---- Server-side generation defaults ----
+# Use "vllm" (not "auto") because the AWQ repo's generation_config.json is
+# incomplete — it is missing temperature and do_sample. With "vllm", only
+# our explicit overrides below apply, making this file the single source of truth.
+#
+# CRITICAL: vLLM's default max_tokens is only 16 if not overridden here.
+# Without max_new_tokens, the model would silently truncate every response at 16 tokens.
+#
+# Mistral AI recommends temperature 0.15 for Devstral Small 2 agentic coding tasks
+# (from the official generation_config.json at mistralai/Devstral-Small-2-24B-Instruct-2512).
+generation-config: "vllm"
+override-generation-config: >
+  {
+    "temperature": 0.15,
+    "max_new_tokens": 90000
+  }
