@@ -1,4 +1,4 @@
-auto_compact_threshold = 88000
+auto_compact_threshold = 90768
 
 active_model = "devstral-local"
 textual_theme = "atom-one-dark"

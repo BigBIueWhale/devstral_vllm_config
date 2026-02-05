@@ -18,7 +18,7 @@ The config files are checked into this repo under [`vibe/`](./vibe/) so they sta
 
 ### Why each setting matters
 
-- **`auto_compact_threshold = 88000`** — Vibe's automatic context compaction fires at 88K tokens, leaving ~8K tokens of headroom before the vLLM server's hard `max-model-len: 96000` ceiling. Without this, long agentic sessions exceed the context limit and get rejected.
+- **`auto_compact_threshold = 90768`** — Vibe's automatic context compaction fires at ~91K tokens, leaving ~8K tokens of headroom before the vLLM server's hard `max-model-len: 98768` ceiling. Without this, long agentic sessions exceed the context limit and get rejected.
 - **`textual_theme = "atom-one-dark"`** — Syntax highlighting theme for Vibe's TUI. Pure cosmetic preference.
 - **`api_base = "http://172.17.0.1:8000/v1"`** — Docker bridge gateway address where the vLLM container listens (see `run_vllm.sh`).
 - **`backend = "generic"`** — Tells Vibe to use the generic OpenAI-compatible backend (not Mistral's proprietary API).

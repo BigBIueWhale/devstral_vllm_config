@@ -46,28 +46,33 @@ limit-mm-per-prompt: '{"image": 0}'
 
 # ---- Memory layout on NVIDIA GeForce RTX 5090 (32 GiB GDDR7) ----
 #
-#   AWQ 4-bit text weights (no vision) ... ~14.0 GiB
-#   CUDA context + activations ........... ~ 1.7 GiB
-#   BF16 KV cache (90K tokens) ........... ~14.1 GiB
-#   Headroom ............................. ~ 0.6 GiB
-#   ─────────────────────────────────────────────────
-#   Total at 0.95 utilization ............ ~30.4 GiB
+# Measured by vLLM v0.15.1 at startup (nvidia-smi reports 30,838 MiB total used):
+#
+#   Model loading ................. 14.29 GiB  (vLLM log: "Model loading took 14.29 GiB")
+#   CUDA driver + runtime ......... ~0.59 GiB  (unavoidable; 31.36 - 30.77 GiB free at init)
+#   torch.compile + CUDA graphs ... ~0.55 GiB  (reclaimed after graph capture: "took -0.55 GiB")
+#   BF16 KV cache ................. 15.07 GiB  (vLLM log: "Available KV cache memory: 15.07 GiB")
+#   ───────────────────────────────────────────
+#   Total ......................... ~30.50 GiB  (of 31.36 GiB visible to container)
 #
 # KV cache stays in full precision (BF16) to preserve attention quality over long
 # contexts. It is enough that we already sacrifice quality with quantized weights —
 # quantizing the KV cache (FP8) on top of that compounds precision loss in ways that
 # hurt the model's ability to attend accurately to context thousands of tokens back.
 # Full-precision KV is non-negotiable when context fidelity matters.
+#
+# 0.98 is the practical ceiling — CUDA driver/runtime consumes ~1.9% of VRAM before
+# vLLM starts allocating, so 0.99 fails with "Free memory ... is less than desired".
 gpu-memory-utilization: 0.98
 
-# 90K context (90,000 tokens). The model supports up to 256K via YaRN scaling,
-# but 90K is the ceiling for full-precision BF16 KV cache + AWQ 4-bit text-only
-# weights on 32 GiB VRAM.
+# 98,768 tokens — the exact KV cache capacity reported by vLLM at 0.98 utilization.
+# The model supports up to 256K via YaRN rope scaling, but with full-precision BF16
+# KV cache on 32 GiB VRAM, 98,768 is the absolute ceiling.
 #
 # KV cache math: 2 (K+V) x 40 layers x 8 KV heads x 128 dim x 2 bytes (BF16)
 #              = 163,840 bytes/token = 160 KiB/token
-# 90,000 tokens x 160 KiB = ~14.1 GiB
-max-model-len: 96000
+# 98,768 tokens x 160 KiB = ~15.07 GiB
+max-model-len: 98768
 
 # Single concurrent request. This dedicates the full KV cache budget to one
 # Mistral Vibe CLI session — the intended single-user agentic coding workflow.
@@ -90,5 +95,5 @@ generation-config: "vllm"
 override-generation-config: >
   {
     "temperature": 0.15,
-    "max_new_tokens": 96000
+    "max_new_tokens": 98768
   }
