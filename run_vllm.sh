@@ -16,6 +16,7 @@ PORT="8000"             # container port (OpenAI-compatible API)
 # https://github.com/BigBIueWhale/personal_server.
 BIND="172.17.0.1"
 CONFIG="$(pwd)/config.yaml"
+CONFIG_OVERRIDE="$(pwd)/config_override.json"
 HF_CACHE="${HOME}/.cache/huggingface"
 
 echo "Pulling image ${IMAGE} ..."
@@ -25,6 +26,10 @@ echo "Ensuring Hugging Face cache directory and config exist ..."
 mkdir -p "${HF_CACHE}"
 if [[ ! -f "${CONFIG}" ]]; then
   echo "Missing config.yaml in $(pwd)"
+  exit 1
+fi
+if [[ ! -f "${CONFIG_OVERRIDE}" ]]; then
+  echo "Missing config_override.json in $(pwd)"
   exit 1
 fi
 
@@ -42,10 +47,11 @@ docker create \
   --restart unless-stopped \
   -p "${BIND}:${PORT}:8000" \
   -v "${CONFIG}:/workspace/config.yaml:ro" \
+  -v "${CONFIG_OVERRIDE}:/workspace/config_override/config.json:ro" \
   -v "${HF_CACHE}:/root/.cache/huggingface" \
   -e "HUGGING_FACE_HUB_TOKEN=${HF_TOKEN:-}" \
   "${IMAGE}" \
-  vllm serve --config /workspace/config.yaml
+  --config /workspace/config.yaml
 
 echo "Starting ${NAME} ..."
 docker start -a "${NAME}"

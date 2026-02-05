@@ -5,8 +5,30 @@
 # Community AWQ 4-bit quantization of mistralai/Devstral-Small-2-24B-Instruct-2512.
 # vLLM auto-detects the compressed-tensors quantization format from config.json.
 model: "cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit"
+revision: "da6366ed3bb6d5207c6544ede10df31e4082e027"
 host: "0.0.0.0"
 port: 8000
+
+# ---- Config and weight format (workaround for vLLM v0.15.1 bug) ----
+# Two bugs in vLLM v0.15.1 prevent loading this AWQ model with default settings:
+#
+# 1. Mistral config path (config-format auto): params.json contains a vision_encoder
+#    section, causing vLLM's Mistral config adapter to route the model through
+#    PixtralForConditionalGeneration instead of the correct Mistral3ForConditionalGeneration.
+#    This crashes with KeyError: 'merging_layer.weight' in pixtral.py.
+#
+# 2. HuggingFace config path (config-format "hf"): config.json declares
+#    text_config.model_type "ministral3", which transformers 4.57.6 (bundled in
+#    the vLLM v0.15.1 Docker image) does not recognize — KeyError: 'ministral3'.
+#
+# Workaround: config_override.json is a copy of the AWQ model's config.json with
+# text_config.model_type patched from "ministral3" to "mistral" (compatible with
+# transformers 4.57.6). The top-level architectures field is unchanged
+# ("Mistral3ForConditionalGeneration"), so vLLM loads the correct model class.
+# hf-config-path points vLLM at the patched config instead of the model's original.
+config-format: "hf"
+load-format: "safetensors"
+hf-config-path: "/workspace/config_override"
 
 # ---- Tool calling (REQUIRED for Mistral Vibe CLI v2.0.2) ----
 # Without these two flags, Mistral Vibe CLI cannot perform any agentic actions
@@ -36,7 +58,7 @@ limit-mm-per-prompt: '{"image": 0}'
 # quantizing the KV cache (FP8) on top of that compounds precision loss in ways that
 # hurt the model's ability to attend accurately to context thousands of tokens back.
 # Full-precision KV is non-negotiable when context fidelity matters.
-gpu-memory-utilization: 0.95
+gpu-memory-utilization: 0.98
 
 # 90K context (90,000 tokens). The model supports up to 256K via YaRN scaling,
 # but 90K is the ceiling for full-precision BF16 KV cache + AWQ 4-bit text-only
@@ -45,7 +67,7 @@ gpu-memory-utilization: 0.95
 # KV cache math: 2 (K+V) x 40 layers x 8 KV heads x 128 dim x 2 bytes (BF16)
 #              = 163,840 bytes/token = 160 KiB/token
 # 90,000 tokens x 160 KiB = ~14.1 GiB
-max-model-len: 90000
+max-model-len: 96000
 
 # Single concurrent request. This dedicates the full KV cache budget to one
 # Mistral Vibe CLI session — the intended single-user agentic coding workflow.
@@ -61,9 +83,12 @@ max-num-seqs: 1
 #
 # Mistral AI recommends temperature 0.15 for Devstral Small 2 agentic coding tasks
 # (from the official generation_config.json at mistralai/Devstral-Small-2-24B-Instruct-2512).
+# Note: Mistral's blog post says 0.2, but the generation_config.json (updated Dec 22, 2025
+# via https://huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512/discussions/24)
+# is the authoritative source. 0.15 is what ships with the model weights.
 generation-config: "vllm"
 override-generation-config: >
   {
     "temperature": 0.15,
-    "max_new_tokens": 90000
+    "max_new_tokens": 96000
   }

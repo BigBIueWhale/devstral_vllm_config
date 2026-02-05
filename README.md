@@ -52,24 +52,32 @@ This guide is for **Mistral Devstral Small 2 24B Instruct 2512** (`mistralai/Dev
 
 ## Quick start
 
-1. **Optional:** export your Hugging Face token (for first-time download of model weights from Hugging Face Hub):
-   ```bash
-   export HF_TOKEN=hf_************************
-   ```
-
-2. **Install / create the server container** (one time):
+1. **Install / create the server container** (one time):
    ```bash
    chmod +x ./run_vllm.sh
    ./run_vllm.sh
    ```
 
-3. **Test the endpoint:**
+2. **Test the endpoint:**
    ```bash
    # From the host:
    curl -s http://172.17.0.1:8000/v1/models | jq .
    ```
 
-4. **Hook up Mistral Vibe CLI v2.0.2:** see **[VIBE_SETUP.md](./VIBE_SETUP.md)**.
+3. **Hook up Mistral Vibe CLI v2.0.2:** see **[VIBE_SETUP.md](./VIBE_SETUP.md)**.
+
+---
+
+## Model weights (offline use)
+
+The first time the container starts, vLLM downloads the AWQ model weights (~16 GiB) from Hugging Face Hub into the host's cache directory, which is bind-mounted into the container:
+
+```
+Host:      ~/.cache/huggingface/hub/models--cyankiwi--Devstral-Small-2-24B-Instruct-2512-AWQ-4bit/
+Container: /root/.cache/huggingface/hub/models--cyankiwi--Devstral-Small-2-24B-Instruct-2512-AWQ-4bit/
+```
+
+Every subsequent `docker start devstral_vllm` reuses the cached weights — no re-download. The container can be removed and recreated (via `run_vllm.sh`) without re-downloading, because the weights live on the host filesystem, not inside the container.
 
 ---
 
