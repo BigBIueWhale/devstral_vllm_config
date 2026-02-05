@@ -15,7 +15,7 @@ This project pins **server-side defaults** for vLLM v0.15.1 so that **Mistral Vi
 - **OS:** Ubuntu 24.04 LTS
 - **Docker:** Docker Engine with NVIDIA Container Toolkit (installed via https://github.com/BigBIueWhale/personal_server)
 
-With this exact combo, **Mistral Devstral Small 2 24B Instruct 2512** runs at **AWQ 4-bit quantization** (~14.0 GiB text-only weights) with **full-precision BF16 KV cache**, achieving **90K token context** on a single NVIDIA GeForce RTX 5090.
+With this exact combo, **Mistral Devstral Small 2 24B Instruct 2512** runs at **AWQ 4-bit quantization** (~14.0 GiB text-only weights) with **full-precision BF16 KV cache** on a single NVIDIA GeForce RTX 5090. The exact context length ceiling is derived from VRAM math in [`config.yaml`](./config.yaml).
 
 ### Why vLLM v0.15.1 instead of Ollama
 
@@ -44,8 +44,10 @@ This guide is for **Mistral Devstral Small 2 24B Instruct 2512** (`mistralai/Dev
 ## Contents
 
 - **[`config.yaml`](./config.yaml)** — vLLM v0.15.1 server config. Sets the model, networking, tool calling flags, text-only mode, and server-side generation defaults (temperature 0.15, max_new_tokens). Clients inherit these unless they explicitly override a field.
+- **[`config_override.json`](./config_override.json)** — patched Hugging Face `config.json` for the AWQ model, working around two vLLM v0.15.1 config-detection bugs. See [Config override workaround](#config-override-workaround-vllm-v0151--transformers-v4576-bugs) below.
 - **[`run_vllm.sh`](./run_vllm.sh)** — one-shot "install" script that pulls the `vllm/vllm-openai:v0.15.1` Docker image and creates a persistent Docker container named `devstral_vllm` with `--restart unless-stopped`. Run it once; use `docker start devstral_vllm` on reboots.
-- **[`VIBE_SETUP.md`](./VIBE_SETUP.md)** — Mistral Vibe CLI v2.0.2 configuration, pointing at the vLLM server.
+- **[`vibe/`](./vibe/)** — Mistral Vibe CLI v2.0.2 config files (`config.toml`, `.env`) to copy into `~/.vibe/`. Version-controlled alongside the vLLM server config.
+- **[`VIBE_SETUP.md`](./VIBE_SETUP.md)** — Mistral Vibe CLI v2.0.2 setup instructions, pointing at the files in `vibe/`.
 - **[`UNINSTALL.md`](./UNINSTALL.md)** — how to stop/remove the container and (optionally) delete the Docker image and Hugging Face cache.
 
 ---
@@ -81,16 +83,52 @@ Every subsequent `docker start devstral_vllm` reuses the cached weights — no r
 
 ---
 
+## Config override workaround (vLLM v0.15.1 + transformers v4.57.6 bugs)
+
+Two bugs in vLLM v0.15.1 prevent loading `cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit` with default config detection. Both are **still unfixed** on the vLLM `main` branch as of February 2026.
+
+### Bug 1: Mistral config path misroutes Mistral3ForConditionalGeneration to PixtralForConditionalGeneration
+
+When vLLM uses Mistral-format config detection (`config-format: "auto"` or `config-format: "mistral"`), it reads the model's `params.json`. Because Mistral Devstral Small 2 24B Instruct 2512 inherits a Pixtral vision encoder from its Mistral Small 3.1 24B base model, `params.json` contains a `vision_encoder` section. vLLM's Mistral config adapter in `vllm/transformers_utils/configs/mistral.py` unconditionally routes **any** model with a `vision_encoder` field to `PixtralForConditionalGeneration` — there is no logic to distinguish Mistral3ForConditionalGeneration (the correct architecture for Devstral Small 2) from actual Pixtral models. This crashes with `KeyError: 'merging_layer.weight'` in `pixtral.py`.
+
+Open upstream issue: [vllm-project/vllm#29904](https://github.com/vllm-project/vllm/issues/29904) (reported for Mistral Large 3, same root cause).
+
+### Bug 2: transformers v4.57.6 does not recognize `ministral3` model type
+
+When vLLM uses Hugging Face config detection (`config-format: "hf"`), it reads the model's `config.json`. The AWQ model's `config.json` declares `text_config.model_type: "ministral3"`, which the `transformers` library version 4.57.6 (bundled in the `vllm/vllm-openai:v0.15.1` Docker image) does not recognize — `KeyError: 'ministral3'`.
+
+The `ministral3` model type was added in **transformers v5.0.0** (released January 26, 2026), but vLLM v0.15.1 is pinned to `transformers >= 4.56.0, < 5`. There is an open PR to bump vLLM to transformers v5 ([vllm-project/vllm#30566](https://github.com/vllm-project/vllm/pull/30566)), but it has not merged.
+
+### The workaround
+
+[`config_override.json`](./config_override.json) is a copy of the AWQ model's `config.json` with one change: `text_config.model_type` patched from `"ministral3"` to `"mistral"` (which transformers v4.57.6 does recognize). The top-level `architectures` field is unchanged (`"Mistral3ForConditionalGeneration"`), so vLLM loads the correct model class.
+
+Three lines in [`config.yaml`](./config.yaml) activate the workaround:
+
+- **`config-format: "hf"`** — forces Hugging Face config path, bypassing the broken Mistral config adapter (Bug 1).
+- **`load-format: "safetensors"`** — required when using `config-format: "hf"` (vLLM cannot infer the weight format from `params.json` when Mistral config detection is skipped).
+- **`hf-config-path: "/workspace/config_override"`** — points vLLM at the patched config instead of the model's original `config.json` (Bug 2).
+
+[`run_vllm.sh`](./run_vllm.sh) bind-mounts `config_override.json` into the container at `/workspace/config_override/config.json:ro`.
+
+### When this workaround becomes unnecessary
+
+Both of the following must be true:
+
+1. **vLLM bumps to transformers >= 5.0.0** — so the `ministral3` model type is natively recognized (eliminating Bug 2 and the need for `hf-config-path`).
+2. **vLLM fixes the Mistral config adapter** to correctly route Mistral3ForConditionalGeneration models that have a `vision_encoder` in `params.json` (eliminating Bug 1 and the need for `config-format: "hf"`).
+
+Until both land, the three-line workaround in `config.yaml` and the patched `config_override.json` remain necessary for running `cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit` on vLLM.
+
+---
+
 ## VRAM memory layout on NVIDIA GeForce RTX 5090 (32 GiB GDDR7)
 
-```
-AWQ 4-bit text weights (no vision) ... ~14.0 GiB
-CUDA context + activations ........... ~ 1.7 GiB
-BF16 KV cache (90K tokens) ........... ~14.1 GiB
-Headroom ............................. ~ 0.6 GiB
-─────────────────────────────────────────────────
-Total at 0.95 gpu-memory-utilization . ~30.4 GiB  (of 32 GiB)
-```
+The three consumers of VRAM are:
+
+1. **AWQ 4-bit text weights** (no vision encoder): ~14.0 GiB — fixed, determined by the model.
+2. **CUDA context + activations**: ~1.7 GiB — roughly constant overhead.
+3. **BF16 KV cache**: variable — this is what fills the remaining VRAM. The `max-model-len` and `gpu-memory-utilization` values in [`config.yaml`](./config.yaml) control how much VRAM is allocated to KV cache, and therefore how many tokens of context fit.
 
 ### Why full-precision KV cache (not FP8)
 
@@ -108,15 +146,14 @@ Mistral Devstral Small 2 24B has 40 layers with 8 KV heads and 128 head dimensio
 
 **BF16 KV:** `2 (K+V) x 40 layers x 8 heads x 128 dim x 2 bytes = 163,840 bytes/token (~160 KiB)`
 
-At BF16, 90,000 tokens of KV cache = `90,000 x 160 KiB = ~14.1 GiB`. This fits alongside the ~14.0 GiB AWQ text-only weights and ~1.7 GiB overhead within the 30.4 GiB budget (0.95 x 32 GiB).
+### Why not the full 256K context
 
-### Why 90K and not 256K
+Mistral Devstral Small 2 24B Instruct 2512 supports up to 256K tokens (262,144) via YaRN rope scaling, but with full-precision BF16 KV cache on 32 GiB VRAM:
 
-The model supports up to 256K tokens via YaRN rope scaling, but with full-precision BF16 KV cache:
-- 256K tokens of BF16 KV cache alone = ~39.1 GiB (exceeds 32 GiB VRAM)
-- Even 128K tokens of BF16 KV cache = ~19.5 GiB, plus ~14.0 GiB weights = ~33.5 GiB (exceeds 32 GiB)
+- 256K tokens of BF16 KV cache alone = ~39.1 GiB (exceeds 32 GiB VRAM before even loading weights)
+- 128K tokens of BF16 KV cache = ~19.5 GiB, plus ~14.0 GiB AWQ text-only weights = ~33.5 GiB (still exceeds 32 GiB)
 
-**90,000 tokens is the ceiling** for full-precision BF16 KV cache + AWQ 4-bit text-only weights at 0.95 gpu-memory-utilization on 32 GiB.
+The actual context ceiling depends on `gpu-memory-utilization` — see [`config.yaml`](./config.yaml) for the chosen value and the accompanying math.
 
 ---
 
@@ -140,9 +177,9 @@ The AWQ repo's `generation_config.json` is incomplete (missing temperature), whi
 
 **Note on discrepancy:** Mistral's blog post announcing Devstral 2 mentions temperature 0.2, while the generation_config.json says 0.15. A [community discussion](https://huggingface.co/mistralai/Devstral-2-123B-Instruct-2512/discussions/9) raised this; Mistral resolved it by updating the generation_config.json to 0.15 as the authoritative default.
 
-### `max_new_tokens: 90000`
+### `max_new_tokens`
 
-**CRITICAL.** vLLM's default `max_tokens` is only **16 tokens** if not overridden. Without this setting, the model would silently truncate every response at 16 tokens. Setting it to 90,000 matches the `max-model-len` context budget so the model is never artificially cut off.
+**CRITICAL.** vLLM's default `max_tokens` is only **16 tokens** if not overridden. Without this setting, the model would silently truncate every response at 16 tokens. The value in [`config.yaml`](./config.yaml) matches the `max-model-len` context budget so the model is never artificially cut off.
 
 ### Single concurrent request: `max-num-seqs: 1`
 
@@ -226,8 +263,8 @@ docker rm devstral_vllm || true
 
 ## Compatibility notes
 
-- Uses **`vllm/vllm-openai:v0.15.1`** Docker image (released February 4, 2026). This image includes native `ministral3` architecture support (added in vLLM v0.12.0), the Mistral tool call parsing fix (added in vLLM v0.13.0), and NVIDIA Blackwell (compute capability 12.0) compatibility.
-- The **NVIDIA vLLM container** (`nvcr.io/nvidia/vllm:25.09-py3`) from NVIDIA NGC does **not** support the `ministral3` architecture used by Devstral Small 2. That is why this project uses the upstream `vllm/vllm-openai` image instead.
+- Uses **`vllm/vllm-openai:v0.15.1`** Docker image (released February 4, 2026). This image includes `Mistral3ForConditionalGeneration` model class support (added in vLLM v0.12.0), the Mistral tool call parsing fix (added in vLLM v0.13.0), and NVIDIA Blackwell (compute capability 12.0) compatibility. However, two config-detection bugs require the [`config_override.json`](./config_override.json) workaround — see [Config override workaround](#config-override-workaround-vllm-v0151--transformers-v4576-bugs) above.
+- The **NVIDIA vLLM container** (`nvcr.io/nvidia/vllm:25.09-py3`) from NVIDIA NGC does **not** support the `Mistral3ForConditionalGeneration` architecture used by Mistral Devstral Small 2 24B Instruct 2512. That is why this project uses the upstream `vllm/vllm-openai` image instead.
 - Assumes you already installed the **NVIDIA Container Toolkit** and your NVIDIA Driver 580.xx (open kernel module) exposes the GPU inside containers via `--gpus all`. This is set up by https://github.com/BigBIueWhale/personal_server.
 - **FlashInfer attention backend** is used automatically on Blackwell (compute capability 12.0). Flash Attention (Dao-AILab) only supports Ampere, Ada, and Hopper — vLLM detects Blackwell and selects FlashInfer instead. No extra flags required.
 - **First container start is slow on Blackwell.** The upstream PyTorch 2.9.x wheels do not include precompiled sm_120 (Blackwell) kernels. PyTorch JIT-compiles them from PTX on the first run, adding several extra minutes to the initial `docker start`. Subsequent starts reuse the cached compilation and are fast.
