@@ -6,46 +6,27 @@
 uv tool install mistral-vibe
 ```
 
-## 2) Create global config
+## 2) Copy the Vibe config into `~/.vibe`
 
 ```bash
 mkdir -p ~/.vibe
+cp vibe/config.toml ~/.vibe/config.toml
+cp vibe/.env ~/.vibe/.env
 ```
 
-### `~/.vibe/config.toml`
+The config files are checked into this repo under [`vibe/`](./vibe/) so they stay version-controlled alongside the vLLM server config.
 
-```toml
-auto_compact_threshold = 82000
+### Why each setting matters
 
-active_model = "devstral-local"
+- **`auto_compact_threshold = 88000`** — Vibe's automatic context compaction fires at 88K tokens, leaving ~8K tokens of headroom before the vLLM server's hard `max-model-len: 96000` ceiling. Without this, long agentic sessions exceed the context limit and get rejected.
+- **`textual_theme = "atom-one-dark"`** — Syntax highlighting theme for Vibe's TUI. Pure cosmetic preference.
+- **`api_base = "http://172.17.0.1:8000/v1"`** — Docker bridge gateway address where the vLLM container listens (see `run_vllm.sh`).
+- **`backend = "generic"`** — Tells Vibe to use the generic OpenAI-compatible backend (not Mistral's proprietary API).
+- **`temperature = 0.15`** — Matches the model's official `generation_config.json` from Mistral AI.
+- **`input_price = 0.0` / `output_price = 0.0`** — Local inference, no API billing. Prevents Vibe from showing misleading cost estimates.
+- **`VLLM_API_KEY=dummy`** — vLLM does not require authentication by default, but Vibe's OpenAI-compatible backend requires `api_key_env_var` to point at a non-empty environment variable. `dummy` satisfies this requirement.
 
-[[providers]]
-name = "vllm-devstral"
-api_base = "http://172.17.0.1:8000/v1"
-api_key_env_var = "VLLM_API_KEY"
-api_style = "openai"
-backend = "generic"
-
-[[models]]
-name = "cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit"
-provider = "vllm-devstral"
-alias = "devstral-local"
-temperature = 0.15
-input_price = 0.0
-output_price = 0.0
-```
-
-### `~/.vibe/.env`
-
-```env
-VLLM_API_KEY=dummy
-```
-
-## 3) Why `auto_compact_threshold = 82000`
-
-The vLLM server is configured with `max-model-len: 90000` (90K tokens). We set Vibe's compaction threshold to 82,000 (leaving ~8K tokens of headroom) so Vibe triggers automatic context summarization **before** hitting the hard ceiling. Without this, long agentic sessions would exceed the context limit and get rejected by the server.
-
-## 4) Verify
+## 3) Verify
 
 ```bash
 curl -s http://172.17.0.1:8000/v1/models | jq .

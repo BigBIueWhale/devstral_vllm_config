@@ -1,0 +1,19 @@
+auto_compact_threshold = 88000
+
+active_model = "devstral-local"
+textual_theme = "atom-one-dark"
+
+[[providers]]
+name = "vllm-devstral"
+api_base = "http://172.17.0.1:8000/v1"
+api_key_env_var = "VLLM_API_KEY"
+api_style = "openai"
+backend = "generic"
+
+[[models]]
+name = "cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit"
+provider = "vllm-devstral"
+alias = "devstral-local"
+temperature = 0.15
+input_price = 0.0
+output_price = 0.0
