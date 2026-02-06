@@ -1,6 +1,14 @@
 # devstral_vllm_config
 
-> Production-ready vLLM v0.15.1 server configuration for **Mistral Devstral Small 2 24B Instruct 2512** (AWQ 4-bit quantization) on **Ubuntu 24.04 LTS + NVIDIA GeForce RTX 5090** (32 GiB GDDR7 VRAM) — tuned for single-user agentic coding with **Mistral Vibe CLI v2.0.2**.
+> **THIS CONFIGURATION PRODUCES GIBBERISH ON LONG OUTPUTS.**
+>
+> The AWQ 4-bit model ([`cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit`](https://huggingface.co/cyankiwi/Devstral-Small-2-24B-Instruct-2512-AWQ-4bit)) served via [`vllm/vllm-openai:v0.15.1`](https://hub.docker.com/r/vllm/vllm-openai/tags) produces coherent short responses (under ~50 tokens) but **degenerates into repetitive gibberish on longer outputs** -- repeating import statements in loops, echoing fragments of the prompt, and eventually emitting streams of punctuation and disconnected words. This is caused by vLLM v0.15.1 loading the wrong text backbone class (`MistralForCausalLM` instead of `Ministral3ForCausalLM`, which does not exist in vLLM v0.15.1's model registry). No alternative 4-bit quantization of Mistral Devstral Small 2 24B works on vLLM v0.15.1 -- all quantized variants on HuggingFace share the same fundamental architecture routing bug. The config workarounds in this repository are each individually correct but cannot fix the missing model class.
+>
+> **Full investigation:** [`GIBBERISH_BUG_REPORT.md`](./GIBBERISH_BUG_REPORT.md)
+
+---
+
+> vLLM v0.15.1 server configuration for **Mistral Devstral Small 2 24B Instruct 2512** (AWQ 4-bit quantization) on **Ubuntu 24.04 LTS + NVIDIA GeForce RTX 5090** (32 GiB GDDR7 VRAM) — tuned for single-user agentic coding with **Mistral Vibe CLI v2.0.2**.
 > Repo link: https://github.com/BigBIueWhale/personal_server
 
 ---

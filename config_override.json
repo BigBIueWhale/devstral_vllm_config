@@ -240,6 +240,10 @@
       "rope_type": "yarn",
       "type": "yarn"
     },
+    "llama_4_scaling": {
+      "original_max_position_embeddings": 8192,
+      "beta": 0.1
+    },
     "sliding_window": null,
     "use_cache": true,
     "vocab_size": 131072
